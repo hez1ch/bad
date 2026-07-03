@@ -3,7 +3,7 @@
 -- он положит программу в /bin/bad, чтобы её можно было вызывать
 -- из любого места просто командой "bad".
 
-local URL = "https://raw.githubusercontent.com/YOURNAME/bad-repo/main/bad.lua"
+local URL = "https://raw.githubusercontent.com/hez1ch/bad/main/bad.lua"
 
 print("Установка BAD...")
 
