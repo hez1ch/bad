@@ -7,7 +7,7 @@
       "depends": [],
       "files": [
         {
-          "url": "https://raw.githubusercontent.com/YOURNAME/bad-repo/main/example/hello.lua",
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/example/hello.lua",
           "path": "/hello.lua"
         }
       ]
