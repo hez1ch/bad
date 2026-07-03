@@ -1,8 +1,10 @@
 -- BAD installer
 -- Run this on a computer (or copy bad.lua manually) to place the
--- program at /bin/bad so it can be called from anywhere as "bad".
+-- program at /bin/bad and make sure /bin is on the shell's PATH,
+-- both now and after reboots, so "bad" works from anywhere.
 
 local URL = "https://raw.githubusercontent.com/hez1ch/bad/main/badpm/bad.lua"
+local PATH_LINE = 'shell.setPath(shell.path() .. ":/bin")'
 
 print("Installing BAD...")
 
@@ -29,5 +31,23 @@ if not fs.exists("/bin") then fs.makeDir("/bin") end
 local h = fs.open("/bin/bad", "w")
 h.write(body)
 h.close()
+
+-- Make "bad" work immediately in this session...
+shell.setPath(shell.path() .. ":/bin")
+
+-- ...and make it survive reboots by adding the same line to /startup.lua
+local startupContent = ""
+if fs.exists("/startup.lua") then
+  local sh = fs.open("/startup.lua", "r")
+  startupContent = sh.readAll()
+  sh.close()
+end
+
+if not startupContent:find(PATH_LINE, 1, true) then
+  local sh = fs.open("/startup.lua", "a")
+  sh.write("\n" .. PATH_LINE .. "\n")
+  sh.close()
+  print("Added /bin to the startup PATH.")
+end
 
 print("Done! Use the command: bad help")
