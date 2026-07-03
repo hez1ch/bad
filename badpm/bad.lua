@@ -56,7 +56,7 @@ local function defaultConfig()
     repos = {
       -- Замените на свой репозиторий (см. README) или добавьте свой
       -- командой: bad repo add <url_к_packages.json>
-      "https://raw.githubusercontent.com/YOURNAME/bad-repo/main/packages.json"
+      "https://raw.githubusercontent.com/hez1ch/bad/main/packages.json"
     }
   }
 end
