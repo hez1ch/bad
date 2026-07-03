@@ -127,6 +127,11 @@ end
 -- Index handling (update)
 -- ---------------------------------------------------------------
 
+local function cacheBust(url)
+  local sep = url:find("?", 1, true) and "&" or "?"
+  return url .. sep .. "_=" .. tostring(os.epoch and os.epoch("utc") or os.time())
+end
+
 local function cmdUpdate()
   local cfg = loadConfig()
   if #cfg.repos == 0 then
@@ -139,7 +144,7 @@ local function cmdUpdate()
 
   for _, repoUrl in ipairs(cfg.repos) do
     infoMsg("Fetching index: " .. repoUrl)
-    local body = httpGet(repoUrl)
+    local body = httpGet(cacheBust(repoUrl))
     if body then
       local ok, data = pcall(textutils.unserializeJSON, body)
       if ok and data and data.packages then
