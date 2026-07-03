@@ -35,6 +35,42 @@
           "path": "/bin/minegram-server"
         }
       ]
+    },
+    "lastfm": {
+      "version": "1.0.0",
+      "description": "Pretty now-playing viewer powered by the Last.fm API",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/lastfm/lastfm.lua",
+          "path": "/bin/lastfm"
+        }
+      ]
+    },
+    "krnl-upd": {
+      "version": "1.0.0",
+      "description": "Pick which OS build (3ggrnel / SmallVanya / Hezion) fastfetch reports",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/fastfetch/krnl-upd.lua",
+          "path": "/bin/krnl-upd"
+        }
+      ]
+    },
+    "fastfetch": {
+      "version": "1.0.0",
+      "description": "neofetch-style system info screen (OS, package manager, uptime, disk)",
+      "author": "hez1ch",
+      "depends": ["krnl-upd"],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/fastfetch/fastfetch.lua",
+          "path": "/bin/fastfetch"
+        }
+      ]
     }
   }
 }
