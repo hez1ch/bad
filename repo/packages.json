@@ -1,0 +1,16 @@
+{
+  "packages": {
+    "hello": {
+      "version": "1.0.0",
+      "description": "Пример пакета: выводит приветствие",
+      "author": "you",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/YOURNAME/bad-repo/main/example/hello.lua",
+          "path": "/hello.lua"
+        }
+      ]
+    }
+  }
+}
