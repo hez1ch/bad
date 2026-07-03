@@ -1,1 +1,1 @@
-print("Привет! Этот файл был установлен через BAD.")
+print("Hello! This file was installed via BAD.")

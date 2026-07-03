@@ -1,25 +1,23 @@
--- Установщик BAD
--- Запустите этот файл на компьютере (или скопируйте bad.lua вручную),
--- он положит программу в /bin/bad, чтобы её можно было вызывать
--- из любого места просто командой "bad".
+-- BAD installer
+-- Run this on a computer (or copy bad.lua manually) to place the
+-- program at /bin/bad so it can be called from anywhere as "bad".
 
-local URL = "https://raw.githubusercontent.com/hez1ch/bad/main/bad.lua"
+local URL = "https://raw.githubusercontent.com/hez1ch/bad/main/badpm/bad.lua"
 
-print("Установка BAD...")
+print("Installing BAD...")
 
 if not http then
-  print("HTTP API отключён на этом компьютере. Включите его в")
-  print("ComputerCraft.cfg (или config/computercraft-server.toml)")
-  print("параметр http.enabled = true, либо скопируйте bad.lua")
-  print("вручную через дискету в /bin/bad")
+  print("HTTP API is disabled on this computer. Enable it in")
+  print("config/computercraft-server.toml, http.enabled = true,")
+  print("or copy bad.lua manually via a floppy disk to /bin/bad")
   return
 end
 
 local resp = http.get(URL)
 if not resp then
-  print("Не удалось скачать bad.lua по адресу:")
+  print("Failed to download bad.lua from:")
   print(URL)
-  print("Отредактируйте URL в install.lua или скопируйте bad.lua вручную.")
+  print("Edit the URL in install.lua or copy bad.lua manually.")
   return
 end
 
@@ -32,4 +30,4 @@ local h = fs.open("/bin/bad", "w")
 h.write(body)
 h.close()
 
-print("Готово! Используйте команду: bad help")
+print("Done! Use the command: bad help")

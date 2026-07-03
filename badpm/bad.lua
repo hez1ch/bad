@@ -1,32 +1,30 @@
 -- ============================================================
---  BAD (Basic Archive Downloader) - пакетный менеджер для
---  компьютеров CC: Tweaked
+--  BAD (Basic Archive Downloader) - package manager for
+--  CC: Tweaked computers
 --
---  Установка (на компьютере в игре):
---    pastebin get <код> bad         -- если вы выложите файл на pastebin
---  или просто скопируйте этот файл через дискету/HTTP.
+--  Repository: https://github.com/hez1ch/bad
 --
---  Использование:
---    bad update              - обновить индекс пакетов со всех репозиториев
---    bad install <pkg> [...] - установить один или несколько пакетов
---    bad remove  <pkg> [...] - удалить пакет(ы)
---    bad list                - список установленных пакетов
---    bad search  <текст>     - поиск пакета по имени/описанию
---    bad info    <pkg>       - подробная информация о пакете
---    bad repo add <url>      - добавить репозиторий (ссылка на packages.json)
---    bad repo remove <url>   - удалить репозиторий
---    bad repo list           - показать репозитории
---    bad upgrade             - обновить все установленные пакеты
+--  Usage:
+--    bad update              - refresh package index from all repos
+--    bad install <pkg> [...] - install one or more packages
+--    bad remove  <pkg> [...] - remove package(s)
+--    bad list                - list installed packages
+--    bad search  <text>      - search packages by name/description
+--    bad info    <pkg>       - show detailed package info
+--    bad repo add <url>      - add a repository (link to packages.json)
+--    bad repo remove <url>   - remove a repository
+--    bad repo list           - show configured repositories
+--    bad upgrade             - upgrade all installed packages
 -- ============================================================
 
-local BAD_DIR      = "/.bad"
-local CONFIG_FILE  = BAD_DIR .. "/config.json"
-local INDEX_FILE   = BAD_DIR .. "/index.json"
-local INSTALLED_FILE = BAD_DIR .. "/installed.json"
-local BIN_DIR      = "/bin"
+local BAD_DIR         = "/.bad"
+local CONFIG_FILE     = BAD_DIR .. "/config.json"
+local INDEX_FILE      = BAD_DIR .. "/index.json"
+local INSTALLED_FILE  = BAD_DIR .. "/installed.json"
+local BIN_DIR         = "/bin"
 
 -- ---------------------------------------------------------------
--- Утилиты
+-- Utilities
 -- ---------------------------------------------------------------
 
 local function ensureDirs()
@@ -54,9 +52,7 @@ end
 local function defaultConfig()
   return {
     repos = {
-      -- Замените на свой репозиторий (см. README) или добавьте свой
-      -- командой: bad repo add <url_к_packages.json>
-      "https://raw.githubusercontent.com/hez1ch/bad/main/packages.json"
+      "https://raw.githubusercontent.com/hez1ch/bad/main/repo/packages.json"
     }
   }
 end
@@ -97,7 +93,7 @@ local function printColor(text, color)
 end
 
 local function errorMsg(text)
-  printColor("[bad] Ошибка: " .. text, colors and colors.red or nil)
+  printColor("[bad] Error: " .. text, colors and colors.red or nil)
 end
 
 local function infoMsg(text)
@@ -114,12 +110,12 @@ end
 
 local function httpGet(url)
   if not http then
-    errorMsg("HTTP API отключён на этом компьютере (ConfigCraft: http.enabled).")
+    errorMsg("HTTP API is disabled on this computer (server config: http.enabled).")
     return nil
   end
   local ok, resp = pcall(http.get, url)
   if not ok or resp == nil then
-    errorMsg("Не удалось загрузить: " .. url)
+    errorMsg("Failed to download: " .. url)
     return nil
   end
   local body = resp.readAll()
@@ -128,13 +124,13 @@ local function httpGet(url)
 end
 
 -- ---------------------------------------------------------------
--- Работа с индексом (update)
+-- Index handling (update)
 -- ---------------------------------------------------------------
 
 local function cmdUpdate()
   local cfg = loadConfig()
   if #cfg.repos == 0 then
-    errorMsg("Нет ни одного репозитория. Добавьте: bad repo add <url>")
+    errorMsg("No repositories configured. Add one with: bad repo add <url>")
     return
   end
 
@@ -142,7 +138,7 @@ local function cmdUpdate()
   local okAny = false
 
   for _, repoUrl in ipairs(cfg.repos) do
-    infoMsg("Загрузка индекса: " .. repoUrl)
+    infoMsg("Fetching index: " .. repoUrl)
     local body = httpGet(repoUrl)
     if body then
       local ok, data = pcall(textutils.unserializeJSON, body)
@@ -154,18 +150,18 @@ local function cmdUpdate()
           count = count + 1
         end
         okAny = true
-        okMsg("Найдено пакетов: " .. count)
+        okMsg("Found packages: " .. count)
       else
-        errorMsg("Некорректный формат индекса: " .. repoUrl)
+        errorMsg("Invalid index format: " .. repoUrl)
       end
     end
   end
 
   if okAny then
     saveIndex(merged)
-    okMsg("Индекс пакетов обновлён.")
+    okMsg("Package index updated.")
   else
-    errorMsg("Не удалось обновить ни один индекс.")
+    errorMsg("Could not update any index.")
   end
 end
 
@@ -185,32 +181,32 @@ local function installOne(name, seen)
 
   local installed = loadInstalled()
   if installed[name] then
-    infoMsg("Пакет '" .. name .. "' уже установлен (v" .. tostring(installed[name].version) .. "). Пропуск.")
+    infoMsg("Package '" .. name .. "' is already installed (v" .. tostring(installed[name].version) .. "). Skipping.")
     return true
   end
 
   local pkg = resolvePackage(name)
   if not pkg then
-    errorMsg("Пакет '" .. name .. "' не найден в индексе. Выполните: bad update")
+    errorMsg("Package '" .. name .. "' not found in index. Run: bad update")
     return false
   end
 
-  -- зависимости
+  -- dependencies
   if pkg.depends then
     for _, dep in ipairs(pkg.depends) do
-      infoMsg("Требуется зависимость: " .. dep)
+      infoMsg("Dependency required: " .. dep)
       if not installOne(dep, seen) then
-        errorMsg("Не удалось установить зависимость '" .. dep .. "' для '" .. name .. "'")
+        errorMsg("Failed to install dependency '" .. dep .. "' for '" .. name .. "'")
         return false
       end
     end
   end
 
-  infoMsg("Установка '" .. name .. "' (v" .. tostring(pkg.version) .. ")...")
+  infoMsg("Installing '" .. name .. "' (v" .. tostring(pkg.version) .. ")...")
 
   local files = pkg.files
   if not files or #files == 0 then
-    errorMsg("У пакета '" .. name .. "' не указаны файлы.")
+    errorMsg("Package '" .. name .. "' has no files listed.")
     return false
   end
 
@@ -218,7 +214,7 @@ local function installOne(name, seen)
   for _, f in ipairs(files) do
     local body = httpGet(f.url)
     if not body then
-      -- откат уже записанных файлов
+      -- roll back already written files
       for _, wf in ipairs(writtenFiles) do
         if fs.exists(wf) then fs.delete(wf) end
       end
@@ -241,13 +237,13 @@ local function installOne(name, seen)
     installedAt = os.epoch and os.epoch("utc") or os.time()
   }
   saveInstalled(installed)
-  okMsg("Пакет '" .. name .. "' установлен.")
+  okMsg("Package '" .. name .. "' installed.")
   return true
 end
 
 local function cmdInstall(args)
   if #args == 0 then
-    errorMsg("Укажите имя пакета: bad install <pkg>")
+    errorMsg("Specify a package name: bad install <pkg>")
     return
   end
   for _, name in ipairs(args) do
@@ -257,14 +253,14 @@ end
 
 local function cmdRemove(args)
   if #args == 0 then
-    errorMsg("Укажите имя пакета: bad remove <pkg>")
+    errorMsg("Specify a package name: bad remove <pkg>")
     return
   end
   local installed = loadInstalled()
   for _, name in ipairs(args) do
     local entry = installed[name]
     if not entry then
-      errorMsg("Пакет '" .. name .. "' не установлен.")
+      errorMsg("Package '" .. name .. "' is not installed.")
     else
       for _, path in ipairs(entry.files) do
         if fs.exists(path) then
@@ -272,7 +268,7 @@ local function cmdRemove(args)
         end
       end
       installed[name] = nil
-      okMsg("Пакет '" .. name .. "' удалён.")
+      okMsg("Package '" .. name .. "' removed.")
     end
   end
   saveInstalled(installed)
@@ -285,8 +281,7 @@ local function cmdUpgrade()
   for name, entry in pairs(installed) do
     local pkg = idx[name]
     if pkg and pkg.version ~= entry.version then
-      infoMsg("Обновление '" .. name .. "': " .. tostring(entry.version) .. " -> " .. tostring(pkg.version))
-      -- удаляем старые файлы и ставим заново
+      infoMsg("Upgrading '" .. name .. "': " .. tostring(entry.version) .. " -> " .. tostring(pkg.version))
       for _, path in ipairs(entry.files) do
         if fs.exists(path) then fs.delete(path) end
       end
@@ -297,7 +292,7 @@ local function cmdUpgrade()
     end
   end
   if not any then
-    okMsg("Все пакеты уже последних версий.")
+    okMsg("All packages are already up to date.")
   end
 end
 
@@ -313,14 +308,14 @@ local function cmdList()
     count = count + 1
   end
   if count == 0 then
-    infoMsg("Установленных пакетов нет.")
+    infoMsg("No packages installed.")
   end
 end
 
 local function cmdSearch(args)
   local query = table.concat(args, " "):lower()
   if query == "" then
-    errorMsg("Укажите текст для поиска: bad search <текст>")
+    errorMsg("Specify search text: bad search <text>")
     return
   end
   local idx = loadIndex()
@@ -333,33 +328,33 @@ local function cmdSearch(args)
     end
   end
   if found == 0 then
-    infoMsg("Ничего не найдено.")
+    infoMsg("No matches found.")
   end
 end
 
 local function cmdInfo(args)
   local name = args[1]
   if not name then
-    errorMsg("Укажите имя пакета: bad info <pkg>")
+    errorMsg("Specify a package name: bad info <pkg>")
     return
   end
   local pkg = resolvePackage(name)
   if not pkg then
-    errorMsg("Пакет '" .. name .. "' не найден в индексе.")
+    errorMsg("Package '" .. name .. "' not found in index.")
     return
   end
-  print("Имя:        " .. name)
-  print("Версия:     " .. tostring(pkg.version))
-  print("Описание:   " .. tostring(pkg.description))
-  print("Автор:      " .. tostring(pkg.author))
+  print("Name:        " .. name)
+  print("Version:     " .. tostring(pkg.version))
+  print("Description: " .. tostring(pkg.description))
+  print("Author:      " .. tostring(pkg.author))
   if pkg.depends and #pkg.depends > 0 then
-    print("Зависимости: " .. table.concat(pkg.depends, ", "))
+    print("Depends:     " .. table.concat(pkg.depends, ", "))
   end
   local installed = loadInstalled()
   if installed[name] then
-    print("Статус:     установлен (v" .. tostring(installed[name].version) .. ")")
+    print("Status:      installed (v" .. tostring(installed[name].version) .. ")")
   else
-    print("Статус:     не установлен")
+    print("Status:      not installed")
   end
 end
 
@@ -374,23 +369,23 @@ local function cmdRepo(args)
   if sub == "add" then
     local url = args[2]
     if not url then
-      errorMsg("Укажите URL: bad repo add <url>")
+      errorMsg("Specify a URL: bad repo add <url>")
       return
     end
     for _, r in ipairs(cfg.repos) do
       if r == url then
-        infoMsg("Репозиторий уже добавлен.")
+        infoMsg("Repository already added.")
         return
       end
     end
     table.insert(cfg.repos, url)
     saveConfig(cfg)
-    okMsg("Репозиторий добавлен: " .. url)
+    okMsg("Repository added: " .. url)
 
   elseif sub == "remove" then
     local url = args[2]
     if not url then
-      errorMsg("Укажите URL: bad repo remove <url>")
+      errorMsg("Specify a URL: bad repo remove <url>")
       return
     end
     local newRepos = {}
@@ -405,21 +400,21 @@ local function cmdRepo(args)
     cfg.repos = newRepos
     saveConfig(cfg)
     if removed then
-      okMsg("Репозиторий удалён.")
+      okMsg("Repository removed.")
     else
-      errorMsg("Такой репозиторий не найден.")
+      errorMsg("Repository not found.")
     end
 
   elseif sub == "list" then
     if #cfg.repos == 0 then
-      infoMsg("Репозитории не настроены.")
+      infoMsg("No repositories configured.")
     end
     for _, r in ipairs(cfg.repos) do
       print(r)
     end
 
   else
-    errorMsg("Использование: bad repo <add|remove|list> [url]")
+    errorMsg("Usage: bad repo <add|remove|list> [url]")
   end
 end
 
@@ -428,17 +423,17 @@ end
 -- ---------------------------------------------------------------
 
 local function cmdHelp()
-  print("BAD - Basic Archive Downloader (пакетный менеджер)")
+  print("BAD - Basic Archive Downloader (package manager)")
   print("")
-  print("Команды:")
-  print("  bad update              - обновить индекс пакетов")
-  print("  bad install <pkg...>    - установить пакет(ы)")
-  print("  bad remove  <pkg...>    - удалить пакет(ы)")
-  print("  bad upgrade             - обновить установленные пакеты")
-  print("  bad list                - список установленных пакетов")
-  print("  bad search  <текст>     - поиск пакета")
-  print("  bad info    <pkg>       - информация о пакете")
-  print("  bad repo add|remove|list [url] - управление репозиториями")
+  print("Commands:")
+  print("  bad update              - refresh package index")
+  print("  bad install <pkg...>    - install package(s)")
+  print("  bad remove  <pkg...>    - remove package(s)")
+  print("  bad upgrade             - upgrade installed packages")
+  print("  bad list                - list installed packages")
+  print("  bad search  <text>      - search for a package")
+  print("  bad info    <pkg>       - show package info")
+  print("  bad repo add|remove|list [url] - manage repositories")
 end
 
 -- ---------------------------------------------------------------
@@ -466,7 +461,7 @@ local function main(...)
   elseif cmd == "info" then cmdInfo(args)
   elseif cmd == "repo" then cmdRepo(args)
   else
-    errorMsg("Неизвестная команда: " .. cmd)
+    errorMsg("Unknown command: " .. cmd)
     cmdHelp()
   end
 end

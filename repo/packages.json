@@ -2,13 +2,37 @@
   "packages": {
     "hello": {
       "version": "1.0.0",
-      "description": "Пример пакета: выводит приветствие",
-      "author": "you",
+      "description": "Example package: prints a greeting",
+      "author": "hez1ch",
       "depends": [],
       "files": [
         {
-          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/example/hello.lua",
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/repo/example/hello.lua",
           "path": "/hello.lua"
+        }
+      ]
+    },
+    "minegram": {
+      "version": "1.0.0",
+      "description": "Minegram client - Telegram-like chat for CC:Tweaked players",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/minegram/minegram.lua",
+          "path": "/bin/minegram"
+        }
+      ]
+    },
+    "minegram-server": {
+      "version": "1.0.0",
+      "description": "Minegram server - hosts chats/groups/channels for Minegram clients",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/minegram/minegram-server.lua",
+          "path": "/bin/minegram-server"
         }
       ]
     }
