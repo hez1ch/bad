@@ -61,7 +61,7 @@
       ]
     },
     "fastfetch": {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "neofetch-style system info screen (OS, package manager, uptime, disk)",
       "author": "hez1ch",
       "depends": ["krnl-upd"],
