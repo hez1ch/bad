@@ -10,6 +10,22 @@
 
 local OS_CONFIG_FILE = "/.system/os.json"
 
+-- Optional shared monitor-mirroring library - if present, fastfetch's
+-- info screen is drawn on every attached monitor too, not just the
+-- terminal. Safe to run without it (falls back to terminal-only).
+local function loadMonlib()
+  local candidates = { "/lib/monitor.lua", "/.bad/lib/monitor.lua" }
+  for _, p in ipairs(candidates) do
+    if fs.exists(p) then
+      local ok, lib = pcall(dofile, p)
+      if ok and lib then return lib end
+    end
+  end
+  return nil
+end
+
+local monlib = loadMonlib()
+
 local LOGOS = {
   ["3ggrnel"] = {
     "   ______      ",
@@ -81,7 +97,11 @@ local function diskInfo()
   return "unknown"
 end
 
-local function main()
+-- Draws the info screen onto whatever `term.*` currently points at.
+-- w, h are passed in (rather than re-read from term.getSize()) so the
+-- exact same function works for the terminal and any attached
+-- monitor via monlib.renderAll.
+local function render(w, h)
   local osData = loadOS()
   local logo = osData and LOGOS[osData.id] or DEFAULT_LOGO
   local colorOk = term.isColor and term.isColor()
@@ -97,7 +117,7 @@ local function main()
                               .. (os.getComputerLabel() and (" (" .. os.getComputerLabel() .. ")") or "") },
     { label = "Uptime",    value = formatUptime() },
     { label = "Disk",      value = diskInfo() },
-    { label = "Term",      value = (function() local w, h = term.getSize() return w .. "x" .. h end)() },
+    { label = "Screen",    value = w .. "x" .. h },
     { label = "Color",     value = colorOk and "yes" or "no (basic terminal)" },
   }
 
@@ -134,6 +154,15 @@ local function main()
 
   setFg(colors and colors.white or nil)
   term.setCursorPos(1, totalRows + 2)
+end
+
+local function main()
+  if monlib then
+    monlib.renderAll(render)
+  else
+    local w, h = term.getSize()
+    render(w, h)
+  end
 end
 
 main()

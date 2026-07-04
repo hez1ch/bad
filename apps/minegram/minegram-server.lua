@@ -16,6 +16,22 @@ local PROTOCOL       = "minegram"
 local HOSTNAME       = "minegram-server"
 local HISTORY_LIMIT  = 50
 
+-- Optional shared monitor-mirroring library - if present, the server
+-- shows a small live status dashboard (users, online count, channel
+-- count) on any attached monitor, alongside the normal terminal log.
+local function loadMonlib()
+  local candidates = { "/lib/monitor.lua", "/.bad/lib/monitor.lua" }
+  for _, p in ipairs(candidates) do
+    if fs.exists(p) then
+      local ok, lib = pcall(dofile, p)
+      if ok and lib then return lib end
+    end
+  end
+  return nil
+end
+
+local monlib = loadMonlib()
+
 -- ---------------------------------------------------------------
 -- Storage
 -- ---------------------------------------------------------------
@@ -277,6 +293,48 @@ local function handleDM(id, msg)
 end
 
 -- ---------------------------------------------------------------
+-- Monitor dashboard (background, monitors only - doesn't touch the
+-- terminal's own scrolling log)
+-- ---------------------------------------------------------------
+
+local function drawDashboard(w, h)
+  local userCount = 0
+  for _ in pairs(users) do userCount = userCount + 1 end
+  local onlineCount = 0
+  for _ in pairs(onlineMap) do onlineCount = onlineCount + 1 end
+  local channelCount = 0
+  for _ in pairs(channels) do channelCount = channelCount + 1 end
+
+  if term.setBackgroundColor then term.setBackgroundColor(colors and colors.black or nil) end
+  term.clear()
+  term.setCursorPos(1, 1)
+  if colors then term.setTextColor(colors.orange) end
+  term.write("MINEGRAM SERVER")
+
+  if colors then term.setTextColor(colors.white) end
+  term.setCursorPos(1, 3)
+  term.write("Registered users: " .. userCount)
+  term.setCursorPos(1, 4)
+  term.write("Online now:       " .. onlineCount)
+  term.setCursorPos(1, 5)
+  term.write("Channels/groups:  " .. channelCount)
+
+  if colors then term.setTextColor(colors.gray) end
+  term.setCursorPos(1, 7)
+  term.write("Updated " .. (os.date and os.date("%H:%M:%S") or "?"))
+end
+
+local function dashboardLoop()
+  if not monlib then return end
+  while true do
+    if monlib.available() then
+      monlib.renderAll(drawDashboard, { monitorsOnly = true })
+    end
+    sleep(2)
+  end
+end
+
+-- ---------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------
 
@@ -292,16 +350,7 @@ local handlers = {
   dm             = handleDM,
 }
 
-local function main()
-  loadAll()
-  if not openModem() then
-    print("No modem attached. Attach a wireless or ender modem and rerun.")
-    return
-  end
-  rednet.host(PROTOCOL, HOSTNAME)
-  log("Minegram server started. Hostname: " .. HOSTNAME)
-  print("Listening for connections...")
-
+local function receiveLoop()
   while true do
     local id, msg = rednet.receive(PROTOCOL)
     if type(msg) == "table" and type(msg.type) == "string" then
@@ -314,6 +363,22 @@ local function main()
       end
     end
   end
+end
+
+local function main()
+  loadAll()
+  if not openModem() then
+    print("No modem attached. Attach a wireless or ender modem and rerun.")
+    return
+  end
+  rednet.host(PROTOCOL, HOSTNAME)
+  log("Minegram server started. Hostname: " .. HOSTNAME)
+  print("Listening for connections...")
+  if monlib and monlib.available() then
+    log(#monlib.list() .. " monitor(s) detected - showing live status dashboard.")
+  end
+
+  parallel.waitForAny(receiveLoop, dashboardLoop)
 end
 
 main()
