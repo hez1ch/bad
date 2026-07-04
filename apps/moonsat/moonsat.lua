@@ -98,16 +98,25 @@ local function main()
   end
 
   draw()
-  while running do
-    local timerId = os.startTimer(0.15)
-    local event, p1 = os.pullEvent()
-    if event == "timer" and p1 == timerId then
+
+  local function animate()
+    while running do
+      sleep(0.15)
       frame = frame + 1
       draw()
-    elseif event == "key" and p1 == keys.q then
-      running = false
     end
   end
+
+  local function watchQuit()
+    while running do
+      local event, key = os.pullEvent("key")
+      if key == keys.q then
+        running = false
+      end
+    end
+  end
+
+  parallel.waitForAny(animate, watchQuit)
 
   term.setBackgroundColor(colors and colors.black or nil)
   term.clear()
@@ -116,4 +125,9 @@ local function main()
   print("moonsat closed.")
 end
 
-main()
+local ok, err = pcall(main)
+if not ok then
+  term.setBackgroundColor(colors and colors.black or nil)
+  if term.isColor and term.isColor() then term.setTextColor(colors.red) end
+  print("moonsat crashed: " .. tostring(err))
+end
