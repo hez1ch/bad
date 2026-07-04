@@ -18,6 +18,22 @@ local CONFIG_DIR  = "/.lastfm"
 local CONFIG_FILE = CONFIG_DIR .. "/config.json"
 local REFRESH_SEC = 20
 
+-- Optional shared monitor-mirroring library - if present, the
+-- now-playing box is also drawn on every attached monitor, e.g. a
+-- monitor mounted as a little "jukebox display" next to a speaker.
+local function loadMonlib()
+  local candidates = { "/lib/monitor.lua", "/.bad/lib/monitor.lua" }
+  for _, p in ipairs(candidates) do
+    if fs.exists(p) then
+      local ok, lib = pcall(dofile, p)
+      if ok and lib then return lib end
+    end
+  end
+  return nil
+end
+
+local monlib = loadMonlib()
+
 -- ---------------------------------------------------------------
 -- Config
 -- ---------------------------------------------------------------
@@ -215,9 +231,8 @@ local function centerPad(text, width)
   return string.rep(" ", math.max(0, pad)) .. text
 end
 
-local function drawBox(cfg, track, err, lastUpdate)
+local function drawBox(cfg, track, err, lastUpdate, w, h)
   term.clear()
-  local w, h = term.getSize()
   local boxW = math.min(w - 2, 48)
   local left = math.floor((w - boxW) / 2) + 1
   local top = 2
@@ -294,7 +309,14 @@ local function main()
   local function refresh()
     track, err = fetchRecentTrack(cfg)
     lastUpdate = os.date and os.date("%H:%M:%S") or "?"
-    drawBox(cfg, track, err, lastUpdate)
+    if monlib then
+      monlib.renderAll(function(w, h)
+        drawBox(cfg, track, err, lastUpdate, w, h)
+      end)
+    else
+      local w, h = term.getSize()
+      drawBox(cfg, track, err, lastUpdate, w, h)
+    end
   end
 
   refresh()
@@ -310,6 +332,9 @@ local function main()
       elseif p1 == keys.r then
         refresh()
       end
+    elseif event == "monitor_touch" then
+      -- tapping a mirrored monitor works like pressing 'r'
+      refresh()
     end
   end
 
