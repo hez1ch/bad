@@ -95,6 +95,110 @@ local function fetchRecentTrack(cfg)
 end
 
 -- ---------------------------------------------------------------
+-- Cyrillic -> Latin transliteration
+-- (CC: Tweaked's default font doesn't render Cyrillic, so any
+-- Cyrillic text coming from track/artist/album names is converted
+-- to a readable Latin approximation before being displayed.)
+-- ---------------------------------------------------------------
+
+local CYRILLIC_MAP = {
+  ["\208\176"] = "a",
+  ["\208\144"] = "A",
+  ["\208\177"] = "b",
+  ["\208\145"] = "B",
+  ["\208\178"] = "v",
+  ["\208\146"] = "V",
+  ["\208\179"] = "g",
+  ["\208\147"] = "G",
+  ["\208\180"] = "d",
+  ["\208\148"] = "D",
+  ["\208\181"] = "e",
+  ["\208\149"] = "E",
+  ["\209\145"] = "e",
+  ["\208\129"] = "E",
+  ["\208\182"] = "zh",
+  ["\208\150"] = "Zh",
+  ["\208\183"] = "z",
+  ["\208\151"] = "Z",
+  ["\208\184"] = "i",
+  ["\208\152"] = "I",
+  ["\208\185"] = "y",
+  ["\208\153"] = "Y",
+  ["\208\186"] = "k",
+  ["\208\154"] = "K",
+  ["\208\187"] = "l",
+  ["\208\155"] = "L",
+  ["\208\188"] = "m",
+  ["\208\156"] = "M",
+  ["\208\189"] = "n",
+  ["\208\157"] = "N",
+  ["\208\190"] = "o",
+  ["\208\158"] = "O",
+  ["\208\191"] = "p",
+  ["\208\159"] = "P",
+  ["\209\128"] = "r",
+  ["\208\160"] = "R",
+  ["\209\129"] = "s",
+  ["\208\161"] = "S",
+  ["\209\130"] = "t",
+  ["\208\162"] = "T",
+  ["\209\131"] = "u",
+  ["\208\163"] = "U",
+  ["\209\132"] = "f",
+  ["\208\164"] = "F",
+  ["\209\133"] = "h",
+  ["\208\165"] = "H",
+  ["\209\134"] = "ts",
+  ["\208\166"] = "Ts",
+  ["\209\135"] = "ch",
+  ["\208\167"] = "Ch",
+  ["\209\136"] = "sh",
+  ["\208\168"] = "Sh",
+  ["\209\137"] = "sch",
+  ["\208\169"] = "Sch",
+  ["\209\138"] = "",
+  ["\208\170"] = "",
+  ["\209\139"] = "y",
+  ["\208\171"] = "Y",
+  ["\209\140"] = "",
+  ["\208\172"] = "",
+  ["\209\141"] = "e",
+  ["\208\173"] = "E",
+  ["\209\142"] = "yu",
+  ["\208\174"] = "Yu",
+  ["\209\143"] = "ya",
+  ["\208\175"] = "Ya",
+}
+
+-- Walks the string byte by byte; whenever a UTF-8 sequence matches a
+-- known Cyrillic character it's replaced with its Latin equivalent.
+-- Anything else (plain ASCII, or other scripts) passes through as-is.
+local function transliterate(text)
+  if not text or text == "" then return text end
+  local out = {}
+  local i = 1
+  local len = #text
+  while i <= len do
+    local b = text:byte(i)
+    local seqLen = 1
+    if b >= 0xF0 then seqLen = 4
+    elseif b >= 0xE0 then seqLen = 3
+    elseif b >= 0xC0 then seqLen = 2 end
+
+    if seqLen > 1 and i + seqLen - 1 <= len then
+      local seq = text:sub(i, i + seqLen - 1)
+      local mapped = CYRILLIC_MAP[seq]
+      out[#out + 1] = mapped or seq
+      i = i + seqLen
+    else
+      out[#out + 1] = string.char(b)
+      i = i + 1
+    end
+  end
+  return table.concat(out)
+end
+
+-- ---------------------------------------------------------------
 -- Drawing
 -- ---------------------------------------------------------------
 
@@ -143,7 +247,7 @@ local function drawBox(cfg, track, err, lastUpdate)
   term.setCursorPos(left, top + 10)
   term.write("+" .. string.rep("-", boxW - 2) .. "+")
 
-  line(top + 1, " " .. centerPad("lastfm - " .. cfg.username, boxW - 4), colors and colors.orange or nil)
+  line(top + 1, " " .. centerPad("lastfm - " .. transliterate(cfg.username), boxW - 4), colors and colors.orange or nil)
 
   if err then
     line(top + 3, " " .. centerPad("Error:", boxW - 4), colors and colors.red or nil)
@@ -154,9 +258,9 @@ local function drawBox(cfg, track, err, lastUpdate)
     line(top + 3, " " .. centerPad(status, boxW - 4),
       isNowPlaying and (colors and colors.lime or nil) or (colors and colors.gray or nil))
 
-    local artist = (track.artist and (track.artist["#text"] or track.artist.name)) or "Unknown artist"
-    local name = track.name or "Unknown track"
-    local album = track.album and track.album["#text"] or ""
+    local artist = transliterate((track.artist and (track.artist["#text"] or track.artist.name)) or "Unknown artist")
+    local name = transliterate(track.name or "Unknown track")
+    local album = transliterate(track.album and track.album["#text"] or "")
 
     line(top + 5, " " .. centerPad(truncate(name, boxW - 4), boxW - 4), colors and colors.white or nil)
     line(top + 6, " " .. centerPad(truncate(artist, boxW - 4), boxW - 4), colors and colors.lightBlue or nil)

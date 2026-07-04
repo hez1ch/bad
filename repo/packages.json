@@ -71,6 +71,18 @@
           "path": "/bin/fastfetch"
         }
       ]
+    },
+    "moonsat": {
+      "version": "1.0.0",
+      "description": "ASCII screensaver: a spinning moon orbited by a radio satellite",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/moonsat/moonsat.lua",
+          "path": "/bin/moonsat"
+        }
+      ]
     }
   }
 }
