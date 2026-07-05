@@ -25,19 +25,36 @@
 --    bad repo add <url>         - add a repository (link to packages.json)
 --    bad repo remove <url>      - remove a repository
 --    bad repo list              - show configured repositories
+--    bad hold <pkg> [...]       - pin package(s) so upgrade skips them
+--    bad unhold <pkg> [...]     - un-pin package(s)
+--    bad which <pkg>            - list files installed by a package
+--    bad owner <path>           - find which installed package owns a file
+--    bad size [pkg]             - show disk usage (all packages, or one)
+--    bad stats                  - summary of repos/index/installed/held
+--    bad export [file]          - save the list of manually installed
+--                                  packages (name + version) to a file
+--    bad import <file>          - install every package listed in an
+--                                  export file (see 'bad export')
+--    bad history [n]            - show the last n actions bad has taken
+--                                  (install/remove/upgrade/...), default 20
+--    bad selfupdate             - re-download bad.lua itself from the
+--                                  main repo and overwrite /bin/bad
 --    bad gui                    - launch a clickable/tappable menu
 --                                  UI, mirrored to any attached
 --                                  monitor peripheral(s)
 --    bad version                - show BAD's own version
 -- ============================================================
 
-local BAD_VERSION     = "2.0.0"
+local BAD_VERSION     = "2.1.0"
+local BAD_SELF_URL    = "https://raw.githubusercontent.com/hez1ch/bad/main/badpm/bad.lua"
 
 local BAD_DIR         = "/.bad"
 local CONFIG_FILE     = BAD_DIR .. "/config.json"
 local INDEX_FILE      = BAD_DIR .. "/index.json"
 local INSTALLED_FILE  = BAD_DIR .. "/installed.json"
 local META_FILE       = BAD_DIR .. "/meta.json"
+local HOLDS_FILE      = BAD_DIR .. "/holds.json"
+local HISTORY_FILE    = BAD_DIR .. "/history.json"
 local BIN_DIR         = "/bin"
 
 -- ---------------------------------------------------------------
@@ -124,6 +141,46 @@ end
 
 local function saveMeta(meta)
   writeJSON(META_FILE, meta)
+end
+
+-- holds: a simple array of package names pinned against upgrade/autoremove
+local function loadHolds()
+  return readJSON(HOLDS_FILE, {})
+end
+
+local function saveHolds(holds)
+  writeJSON(HOLDS_FILE, holds)
+end
+
+local function isHeld(name, holds)
+  holds = holds or loadHolds()
+  for _, h in ipairs(holds) do
+    if h == name then return true end
+  end
+  return false
+end
+
+-- history: an append-only log of actions bad has taken, newest last.
+-- Capped at 200 entries so it never grows unbounded on a long-lived
+-- computer.
+local HISTORY_MAX = 200
+
+local function loadHistory()
+  return readJSON(HISTORY_FILE, {})
+end
+
+local function logHistory(action, name, extra)
+  local hist = loadHistory()
+  table.insert(hist, {
+    time = os.date and os.date("%Y-%m-%d %H:%M:%S") or tostring(os.time()),
+    action = action,
+    package = name,
+    detail = extra,
+  })
+  while #hist > HISTORY_MAX do
+    table.remove(hist, 1)
+  end
+  writeJSON(HISTORY_FILE, hist)
 end
 
 local function printColor(text, color)
@@ -328,6 +385,7 @@ local function installOne(name, seen, isManual)
     reason = isManual and "manual" or "auto",
   }
   saveInstalled(installed)
+  logHistory(isManual and "install" or "install (auto dep)", name, "v" .. tostring(pkg.version))
   okMsg("Package '" .. name .. "' installed.")
   return true
 end
@@ -379,6 +437,7 @@ local function cmdRemove(args)
       else
         removeFiles(entry)
         installed[name] = nil
+        logHistory("remove", name, "v" .. tostring(entry.version))
         okMsg("Package '" .. name .. "' removed.")
       end
     end
@@ -406,6 +465,57 @@ local function cmdReinstall(args)
   end
 end
 
+-- ---------------------------------------------------------------
+-- hold / unhold
+-- ---------------------------------------------------------------
+
+local function cmdHold(args)
+  if #args == 0 then
+    errorMsg("Specify a package name: bad hold <pkg> [pkg2 ...]")
+    return
+  end
+  local installed = loadInstalled()
+  local holds = loadHolds()
+  for _, name in ipairs(args) do
+    if not installed[name] then
+      warnMsg("'" .. name .. "' is not installed - holding it anyway.")
+    end
+    if isHeld(name, holds) then
+      infoMsg("'" .. name .. "' is already held.")
+    else
+      table.insert(holds, name)
+      okMsg("'" .. name .. "' is now held (won't be touched by upgrade/autoremove).")
+    end
+  end
+  saveHolds(holds)
+end
+
+local function cmdUnhold(args)
+  if #args == 0 then
+    errorMsg("Specify a package name: bad unhold <pkg> [pkg2 ...]")
+    return
+  end
+  local holds = loadHolds()
+  for _, name in ipairs(args) do
+    local newHolds = {}
+    local removed = false
+    for _, h in ipairs(holds) do
+      if h == name then
+        removed = true
+      else
+        table.insert(newHolds, h)
+      end
+    end
+    holds = newHolds
+    if removed then
+      okMsg("'" .. name .. "' is no longer held.")
+    else
+      infoMsg("'" .. name .. "' was not held.")
+    end
+  end
+  saveHolds(holds)
+end
+
 local function cmdUpgrade(args)
   local installed = loadInstalled()
   local idx = loadIndex()
@@ -416,18 +526,25 @@ local function cmdUpgrade(args)
     for _, n in ipairs(args) do targets[n] = true end
   end
 
+  local holds = loadHolds()
   local any = false
   for name, entry in pairs(installed) do
     if not targets or targets[name] then
       local pkg = idx[name]
       if pkg and pkg.version ~= entry.version then
-        infoMsg("Upgrading '" .. name .. "': " .. tostring(entry.version) .. " -> " .. tostring(pkg.version))
-        removeFiles(entry)
-        local wasManual = (entry.reason ~= "auto")
-        installed[name] = nil
-        saveInstalled(installed)
-        installOne(name, nil, wasManual)
-        any = true
+        if isHeld(name, holds) then
+          warnMsg("'" .. name .. "' is held at v" .. tostring(entry.version) ..
+            " (v" .. tostring(pkg.version) .. " available) - run 'bad unhold " .. name .. "' to allow.")
+        else
+          infoMsg("Upgrading '" .. name .. "': " .. tostring(entry.version) .. " -> " .. tostring(pkg.version))
+          removeFiles(entry)
+          local wasManual = (entry.reason ~= "auto")
+          installed[name] = nil
+          saveInstalled(installed)
+          installOne(name, nil, wasManual)
+          logHistory("upgrade", name, tostring(entry.version) .. " -> " .. tostring(pkg.version))
+          any = true
+        end
       elseif targets and targets[name] then
         okMsg("'" .. name .. "' is already up to date.")
       elseif targets and not pkg then
@@ -464,26 +581,40 @@ local function cmdAutoremove()
   local installed = loadInstalled()
   local idx = loadIndex()
   local needed = computeNeeded(installed, idx)
+  local holds = loadHolds()
 
   local toRemove = {}
+  local skippedHeld = {}
   for name, entry in pairs(installed) do
     if entry.reason == "auto" and not needed[name] then
-      table.insert(toRemove, name)
+      if isHeld(name, holds) then
+        table.insert(skippedHeld, name)
+      else
+        table.insert(toRemove, name)
+      end
     end
   end
 
   if #toRemove == 0 then
-    okMsg("Nothing to autoremove - no unused auto-installed dependencies.")
+    if #skippedHeld > 0 then
+      okMsg("Nothing to autoremove (held package(s) kept: " .. table.concat(skippedHeld, ", ") .. ").")
+    else
+      okMsg("Nothing to autoremove - no unused auto-installed dependencies.")
+    end
     return
   end
 
   infoMsg("Removing unused auto-installed dependencies:")
   for _, name in ipairs(toRemove) do
+    logHistory("autoremove", name, "v" .. tostring(installed[name].version))
     removeFiles(installed[name])
     installed[name] = nil
     print("  - " .. name)
   end
   saveInstalled(installed)
+  if #skippedHeld > 0 then
+    infoMsg("Kept held package(s): " .. table.concat(skippedHeld, ", "))
+  end
   okMsg("Autoremove complete (" .. #toRemove .. " package(s) removed).")
 end
 
@@ -500,10 +631,12 @@ end
 
 local function cmdList()
   local installed = loadInstalled()
+  local holds = loadHolds()
   local count = 0
   for name, entry in pairs(installed) do
     local reason = entry.reason == "auto" and " (auto)" or ""
-    print(name .. "  (v" .. tostring(entry.version) .. ")" .. reason)
+    local held = isHeld(name, holds) and " [held]" or ""
+    print(name .. "  (v" .. tostring(entry.version) .. ")" .. reason .. held)
     count = count + 1
   end
   if count == 0 then
@@ -553,6 +686,9 @@ local function cmdInfo(args)
   if installed[name] then
     local reason = installed[name].reason == "auto" and " (auto-installed)" or " (manually installed)"
     print("Status:      installed (v" .. tostring(installed[name].version) .. ")" .. reason)
+    if isHeld(name, loadHolds()) then
+      print("Held:        yes (upgrade/autoremove will skip it)")
+    end
   else
     print("Status:      not installed")
   end
@@ -594,6 +730,201 @@ local function cmdDepends(args)
   else
     print("No installed packages currently depend on '" .. name .. "'.")
   end
+end
+
+-- ---------------------------------------------------------------
+-- which / owner / size / stats
+-- ---------------------------------------------------------------
+
+local function cmdWhich(args)
+  local name = args[1]
+  if not name then
+    errorMsg("Specify a package name: bad which <pkg>")
+    return
+  end
+  local installed = loadInstalled()
+  local entry = installed[name]
+  if not entry then
+    errorMsg("Package '" .. name .. "' is not installed.")
+    return
+  end
+  if not entry.files or #entry.files == 0 then
+    infoMsg("'" .. name .. "' did not record any files.")
+    return
+  end
+  for _, path in ipairs(entry.files) do
+    local mark = fs.exists(path) and "" or "  (missing!)"
+    print(path .. mark)
+  end
+end
+
+local function cmdOwner(args)
+  local path = args[1]
+  if not path then
+    errorMsg("Specify a path: bad owner <path>")
+    return
+  end
+  local installed = loadInstalled()
+  local found = {}
+  for name, entry in pairs(installed) do
+    if entry.files then
+      for _, f in ipairs(entry.files) do
+        if f == path then table.insert(found, name) end
+      end
+    end
+  end
+  if #found == 0 then
+    infoMsg("No installed package owns '" .. path .. "'.")
+  else
+    print("'" .. path .. "' is owned by: " .. table.concat(found, ", "))
+  end
+end
+
+local function fileSize(path)
+  if fs.getSize then
+    local ok, size = pcall(fs.getSize, path)
+    if ok and size then return size end
+  end
+  return 0
+end
+
+local function cmdSize(args)
+  local installed = loadInstalled()
+  local name = args[1]
+
+  if name then
+    local entry = installed[name]
+    if not entry then
+      errorMsg("Package '" .. name .. "' is not installed.")
+      return
+    end
+    local total = 0
+    for _, path in ipairs(entry.files or {}) do
+      total = total + fileSize(path)
+    end
+    print(name .. ": " .. total .. " bytes across " .. #(entry.files or {}) .. " file(s)")
+    return
+  end
+
+  local rows = {}
+  local grandTotal = 0
+  for pname, entry in pairs(installed) do
+    local total = 0
+    for _, path in ipairs(entry.files or {}) do
+      total = total + fileSize(path)
+    end
+    grandTotal = grandTotal + total
+    table.insert(rows, { name = pname, size = total })
+  end
+  table.sort(rows, function(a, b) return a.size > b.size end)
+  for _, r in ipairs(rows) do
+    print(string.format("%8d bytes  %s", r.size, r.name))
+  end
+  print("")
+  okMsg("Total: " .. grandTotal .. " bytes across " .. #rows .. " package(s)")
+end
+
+local function cmdStats()
+  local cfg = loadConfig()
+  local idx = loadIndex()
+  local installed = loadInstalled()
+  local holds = loadHolds()
+
+  local idxCount = 0
+  for _ in pairs(idx) do idxCount = idxCount + 1 end
+
+  local manual, auto = 0, 0
+  for _, entry in pairs(installed) do
+    if entry.reason == "auto" then auto = auto + 1 else manual = manual + 1 end
+  end
+
+  print("Repositories:        " .. #cfg.repos)
+  print("Packages in index:   " .. idxCount)
+  print("Installed (manual):  " .. manual)
+  print("Installed (auto):    " .. auto)
+  print("Installed (total):   " .. (manual + auto))
+  print("Held packages:       " .. #holds)
+  local meta = loadMeta()
+  print("Last index update:   " .. tostring(meta.lastUpdate or "never"))
+end
+
+-- ---------------------------------------------------------------
+-- export / import
+-- ---------------------------------------------------------------
+
+local DEFAULT_EXPORT_FILE = "/bad-export.json"
+
+local function cmdExport(args)
+  local path = args[1] or DEFAULT_EXPORT_FILE
+  local installed = loadInstalled()
+  local list = {}
+  for name, entry in pairs(installed) do
+    if entry.reason ~= "auto" then
+      table.insert(list, { name = name, version = entry.version })
+    end
+  end
+  writeJSON(path, { packages = list })
+  okMsg("Exported " .. #list .. " manually installed package(s) to " .. path)
+end
+
+local function cmdImport(args)
+  local path = args[1]
+  if not path then
+    errorMsg("Specify a file: bad import <file>")
+    return
+  end
+  if not fs.exists(path) then
+    errorMsg("File not found: " .. path)
+    return
+  end
+  local data = readJSON(path, nil)
+  if not data or not data.packages then
+    errorMsg("'" .. path .. "' doesn't look like a 'bad export' file.")
+    return
+  end
+  infoMsg("Importing " .. #data.packages .. " package(s) from " .. path .. "...")
+  for _, p in ipairs(data.packages) do
+    installOne(p.name, nil, true)
+  end
+  okMsg("Import complete.")
+end
+
+-- ---------------------------------------------------------------
+-- history
+-- ---------------------------------------------------------------
+
+local function cmdHistory(args)
+  local n = tonumber(args[1]) or 20
+  local hist = loadHistory()
+  local start = math.max(1, #hist - n + 1)
+  if #hist == 0 then
+    infoMsg("No history recorded yet.")
+    return
+  end
+  for i = start, #hist do
+    local e = hist[i]
+    local detail = e.detail and (" (" .. tostring(e.detail) .. ")") or ""
+    print(tostring(e.time) .. "  " .. tostring(e.action) .. "  " .. tostring(e.package) .. detail)
+  end
+end
+
+-- ---------------------------------------------------------------
+-- selfupdate
+-- ---------------------------------------------------------------
+
+local function cmdSelfupdate()
+  infoMsg("Downloading the latest bad.lua from " .. BAD_SELF_URL .. " ...")
+  local body = httpGet(BAD_SELF_URL)
+  if not body then
+    errorMsg("Selfupdate failed - could not download bad.lua.")
+    return
+  end
+  local target = shell and shell.getRunningProgram and ("/" .. shell.getRunningProgram()) or "/bin/bad"
+  local h = fs.open(target, "w")
+  h.write(body)
+  h.close()
+  logHistory("selfupdate", "bad", "v" .. BAD_VERSION .. " -> latest")
+  okMsg("bad updated (" .. target .. "). Re-run 'bad' to use the new version.")
 end
 
 -- ---------------------------------------------------------------
@@ -670,6 +1001,8 @@ local MENU_ITEMS = {
   { id = "outdated",   label = "Show outdated packages" },
   { id = "autoremove", label = "Autoremove unused deps" },
   { id = "repos",      label = "List repositories" },
+  { id = "stats",      label = "Show stats" },
+  { id = "history",    label = "Show history" },
   { id = "quit",       label = "Exit" },
 }
 
@@ -740,6 +1073,10 @@ local function cmdGui()
       cmdAutoremove()
     elseif id == "repos" then
       cmdRepo({ "list" })
+    elseif id == "stats" then
+      cmdStats()
+    elseif id == "history" then
+      cmdHistory({})
     end
 
     print("")
@@ -832,6 +1169,16 @@ local function cmdHelp()
   print("  bad search  <text>         - search for a package")
   print("  bad info    <pkg>          - show package info")
   print("  bad depends <pkg>          - show deps + reverse deps of a package")
+  print("  bad hold <pkg...>          - pin package(s) so upgrade skips them")
+  print("  bad unhold <pkg...>        - un-pin package(s)")
+  print("  bad which <pkg>            - list files installed by a package")
+  print("  bad owner <path>           - find which package owns a file")
+  print("  bad size [pkg]             - show disk usage (all, or one pkg)")
+  print("  bad stats                  - summary of repos/index/installs")
+  print("  bad export [file]          - save manually installed packages")
+  print("  bad import <file>          - install packages from an export file")
+  print("  bad history [n]            - show the last n actions (default 20)")
+  print("  bad selfupdate             - re-download bad.lua and overwrite it")
   print("  bad repo add|remove|list [url] - manage repositories")
   print("  bad gui                    - clickable/tappable menu UI")
   print("                               (mirrored to any attached monitor)")
@@ -873,6 +1220,16 @@ local function main(...)
   elseif cmd == "search" then cmdSearch(args)
   elseif cmd == "info" then cmdInfo(args)
   elseif cmd == "depends" then cmdDepends(args)
+  elseif cmd == "hold" then cmdHold(args)
+  elseif cmd == "unhold" then cmdUnhold(args)
+  elseif cmd == "which" then cmdWhich(args)
+  elseif cmd == "owner" then cmdOwner(args)
+  elseif cmd == "size" then cmdSize(args)
+  elseif cmd == "stats" then cmdStats()
+  elseif cmd == "export" then cmdExport(args)
+  elseif cmd == "import" then cmdImport(args)
+  elseif cmd == "history" then cmdHistory(args)
+  elseif cmd == "selfupdate" then cmdSelfupdate()
   elseif cmd == "repo" then cmdRepo(args)
   elseif cmd == "gui" then cmdGui()
   elseif cmd == "version" or cmd == "--version" then cmdVersionOut()

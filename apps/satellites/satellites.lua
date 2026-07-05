@@ -20,9 +20,10 @@
 
 local SHADES = " .:-=+*#%@"
 local CAM_TILT = 0.35        -- fixed camera tilt (radians)
-local EARTH_RES_LAT = 11
-local EARTH_RES_LON = 22
 local ORBIT_TICK_SECONDS = 60 -- satellites advance once per real minute
+local MARKER_CLICK_TOLERANCE = 2 -- how many cells away a click/tap can
+                                  -- land from a satellite marker and
+                                  -- still count as hitting it
 
 local DATA_DIR  = "/.satellites"
 local DATA_FILE = DATA_DIR .. "/satellites.json"
@@ -108,17 +109,6 @@ local function satellitePosition(sat)
   return threed.rotateX(local_, math.rad(sat.inclination or 0))
 end
 
--- ---------------------------------------------------------------
--- Earth surface classification (deterministic "continents" pattern -
--- a fixed function of each point's own coordinates, so it rotates
--- naturally with the globe instead of jittering between frames)
--- ---------------------------------------------------------------
-
-local function isLand(p)
-  local v = math.sin(p.x * 5 + p.z * 3) + math.cos(p.y * 4 - p.x * 2) + math.sin(p.z * 6)
-  return v > 0.35
-end
-
 local function clamp(v, lo, hi)
   if v < lo then return lo end
   if v > hi then return hi end
@@ -126,13 +116,62 @@ local function clamp(v, lo, hi)
 end
 
 -- ---------------------------------------------------------------
+-- Earth surface classification (deterministic "continents" pattern -
+-- a fixed function of each point's own coordinates, so it rotates
+-- naturally with the globe instead of jittering between frames)
+--
+-- Blends five sine/cosine harmonics at different frequencies/weights
+-- (a cheap stand-in for Perlin-style noise) so the coastline reads as
+-- organic continent-ish shapes rather than a handful of same-sized
+-- blobs. The 0.23 threshold was picked to land at roughly Earth's
+-- real ~29% land coverage. Points near the poles (|y| beyond 0.82)
+-- are classified as polar ice regardless, so the globe gets visible
+-- ice caps like the real thing.
+-- ---------------------------------------------------------------
+
+local LAND_THRESHOLD = 0.23
+local ICE_LATITUDE = 0.82
+
+local function classifyPoint(p)
+  if p.y > ICE_LATITUDE or p.y < -ICE_LATITUDE then
+    return "ice"
+  end
+  local v = math.sin(p.x * 5 + p.z * 3) * 0.5
+          + math.cos(p.y * 4 - p.x * 2) * 0.35
+          + math.sin(p.z * 6 + p.y * 2) * 0.3
+          + math.sin(p.x * 11 - p.z * 7) * 0.15
+          + math.cos(p.x * 2 + p.y * 2 + p.z * 2) * 0.2
+  return (v > LAND_THRESHOLD) and "land" or "ocean"
+end
+
+-- ---------------------------------------------------------------
 -- Rendering
 -- ---------------------------------------------------------------
 
+-- Sphere radius (in character cells) that best fills a screen of
+-- w x h without touching the edges. Leaves a couple of rows for the
+-- header/footer text and a small side margin. No arbitrary low cap -
+-- a big monitor gets a big, detailed Earth instead of the same tiny
+-- globe as a Pocket Computer.
+local function computeScale(w, h)
+  local scaleX = math.max(4, math.min(math.floor((w - 4) / 2), h - 3))
+  local scaleY = math.max(2, math.floor(scaleX / 2))
+  return scaleX, scaleY
+end
+
+-- Sphere sampling resolution scaled to how big it'll actually be
+-- drawn, so a large monitor gets a smoothly-sampled globe instead of
+-- gappy/blocky sparse points, while a small terminal doesn't waste
+-- cycles on detail nobody can see. Capped for performance.
+local function computeResolution(scaleX, scaleY)
+  local lonSteps = clamp(math.floor(scaleX * 1.6), 24, 60)
+  local latSteps = clamp(math.floor(scaleY * 1.8), 12, 30)
+  return latSteps, lonSteps
+end
+
 local function buildGeometry(w, h)
   local cx, cy = math.floor(w / 2), math.floor(h / 2)
-  local scaleX = math.min(math.floor(w / 5), 9)
-  local scaleY = math.max(3, math.floor(scaleX / 2))
+  local scaleX, scaleY = computeScale(w, h)
 
   local stars = {}
   for i = 1, math.floor(w * h / 45) do
@@ -142,6 +181,25 @@ local function buildGeometry(w, h)
   end
 
   return { cx = cx, cy = cy, scaleX = scaleX, scaleY = scaleY, stars = stars }
+end
+
+-- Looks at the terminal and every attached monitor to find the
+-- largest scale the scene will ever be drawn at, so the shared
+-- sphere point-cloud is sampled finely enough for the biggest screen
+-- it'll be mirrored to.
+local function maxSceneScale(monlib)
+  local maxX, maxY = computeScale(term.getSize())
+  if monlib then
+    for _, entry in ipairs(monlib.list()) do
+      local ok, w, h = pcall(entry.mon.getSize)
+      if ok and w and h then
+        local sx, sy = computeScale(w, h)
+        if sx > maxX then maxX = sx end
+        if sy > maxY then maxY = sy end
+      end
+    end
+  end
+  return maxX, maxY
 end
 
 local function main()
@@ -156,12 +214,16 @@ local function main()
   local LIGHT = threed.normalize({ x = -0.4, y = 0.5, z = 1 })
 
   -- Real 3D Earth: a unit sphere sampled once, plus a fixed
-  -- land/ocean classification per point (computed once, carried
-  -- through rotation via `extras`, never re-randomized).
+  -- land/ocean/ice classification per point (computed once, carried
+  -- through rotation via `extras`, never re-randomized). Resolution
+  -- is picked to match the largest screen (terminal or any mirrored
+  -- monitor) this will actually be drawn on.
+  local maxScaleX, maxScaleY = maxSceneScale(monlib)
+  local EARTH_RES_LAT, EARTH_RES_LON = computeResolution(maxScaleX, maxScaleY)
   local earthPts = threed.sphere(EARTH_RES_LAT, EARTH_RES_LON)
   local earthLand = {}
   for i, p in ipairs(earthPts) do
-    earthLand[i] = isLand(p) and "land" or "ocean"
+    earthLand[i] = classifyPoint(p)
   end
 
   local geomByTarget = {}
@@ -206,7 +268,9 @@ local function main()
     for _, cell in ipairs(buffer) do
       local idx = clamp(math.floor(cell.shade * (#SHADES - 1)) + 1, 1, #SHADES)
       if colorOk then
-        if cell.extra == "land" then
+        if cell.extra == "ice" then
+          term.setTextColor(cell.shade > 0.4 and colors.white or colors.lightGray)
+        elseif cell.extra == "land" then
           term.setTextColor(cell.shade > 0.5 and colors.lime or colors.green)
         else
           term.setTextColor(cell.shade > 0.5 and colors.lightBlue or colors.blue)
@@ -378,7 +442,7 @@ local function main()
       if mode == "orbit" then
         if ev.type == "click" then
           local markers = lastMarkers[ev.source] or lastMarkers["term"] or {}
-          local hit = nearestMarker(markers, ev.x, ev.y, 1)
+          local hit = nearestMarker(markers, ev.x, ev.y, MARKER_CLICK_TOLERANCE)
           if hit then
             selectedId = hit
             mode = "detail"

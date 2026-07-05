@@ -109,7 +109,7 @@
       ]
     },
     "satellites": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "A REAL 3D spinning Earth with tracked satellites in real-time orbit (moves once per real minute); click/tap a satellite for full info",
       "author": "hez1ch",
       "depends": ["threed", "monlib"],
