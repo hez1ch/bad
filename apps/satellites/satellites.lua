@@ -243,6 +243,41 @@ local function main()
 
   local satData = loadAndCatchUp()
 
+  -- Picks up satellites added/edited/removed via `satellites-admin`
+  -- *while this viewer is already open*, without needing a restart.
+  -- Keeps each existing satellite's in-memory `angle`/`lastTick` (so a
+  -- satellite mid-orbit doesn't visibly jump), but takes everything
+  -- else - including brand new satellites - fresh from disk.
+  local RELOAD_TICK_SECONDS = 5
+  local function reloadFromDisk()
+    local diskData = loadData()
+    local changed = false
+
+    for id, diskSat in pairs(diskData) do
+      local cur = satData[id]
+      if not cur then
+        satData[id] = diskSat
+        changed = true
+      else
+        for k, v in pairs(diskSat) do
+          if k ~= "angle" and k ~= "lastTick" and cur[k] ~= v then
+            cur[k] = v
+            changed = true
+          end
+        end
+      end
+    end
+
+    for id in pairs(satData) do
+      if not diskData[id] then
+        satData[id] = nil
+        changed = true
+      end
+    end
+
+    return changed
+  end
+
   local function drawOrbit(w, h, targetName)
     local colorOk = term.isColor and term.isColor()
     local geom = geomByTarget[targetName]
@@ -410,6 +445,18 @@ local function main()
     end
   end
 
+  -- Picks up new/edited/removed satellites from `satellites-admin`
+  -- every few seconds, so you don't have to close and reopen this
+  -- viewer to see something you just added.
+  local function dataRefresher()
+    while running do
+      sleep(RELOAD_TICK_SECONDS)
+      if reloadFromDisk() then
+        renderFrame()
+      end
+    end
+  end
+
   local function nearestMarker(markers, x, y, maxDist)
     local best, bestDist = nil, nil
     for _, m in ipairs(markers) do
@@ -461,7 +508,7 @@ local function main()
     end
   end
 
-  parallel.waitForAny(animate, orbitUpdater, watchInput)
+  parallel.waitForAny(animate, orbitUpdater, dataRefresher, watchInput)
 
   term.setBackgroundColor(colors and colors.black or nil)
   term.clear()
