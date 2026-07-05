@@ -116,7 +116,7 @@
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/satellites/satellites.lua",
-          "path": "/bin/satelites"
+          "path": "/bin/satellites"
         }
       ]
     },
@@ -128,7 +128,7 @@
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/satellites/satellites-admin.lua",
-          "path": "/bin/satelites-admin"
+          "path": "/bin/satellites-admin"
         }
       ]
     }
