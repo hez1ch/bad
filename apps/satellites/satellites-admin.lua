@@ -13,6 +13,12 @@
 --    satellites-admin info <id>
 --    satellites-admin computer add <id> <computerId> <computerName>
 --    satellites-admin computer remove <id> <computerId>
+--    satellites-admin serve [side]
+--                      broadcast the satellite catalog over a modem
+--                      (wireless preferred) so any computer running
+--                      `satellites` in range picks it up automatically
+--                      - no need to share the local satellites.json
+--                      file by hand. Press q to stop serving.
 --
 --  Running with no arguments opens a small interactive menu instead
 --  (mirrored to any attached monitor for oversight - actual
@@ -23,6 +29,11 @@
 
 local DATA_DIR  = "/.satellites"
 local DATA_FILE = DATA_DIR .. "/satellites.json"
+
+-- Protocol name used to broadcast/serve the satellite catalog over a
+-- modem. `satellites` (the viewer) listens for this on its own.
+local NET_PROTOCOL = "bad-satellites"
+local BROADCAST_INTERVAL_SECONDS = 30
 
 local function loadMonlib()
   local candidates = { "/lib/monitor.lua", "/.bad/lib/monitor.lua" }
@@ -296,6 +307,111 @@ local function cmdComputer(args)
   end
 end
 
+-- ---------------------------------------------------------------
+-- Serve the catalog over a modem (rednet)
+-- ---------------------------------------------------------------
+
+-- Picks a modem to use: an explicit side if given and valid,
+-- otherwise the first wireless modem found, falling back to a wired
+-- one if that's all there is.
+local function findModem(sideArg)
+  if sideArg then
+    if peripheral.getType(sideArg) == "modem" then return sideArg end
+    print("'" .. sideArg .. "' isn't a modem. Attached peripherals:")
+    for _, s in ipairs(peripheral.getNames()) do
+      print("  " .. s .. " (" .. tostring(peripheral.getType(s)) .. ")")
+    end
+    return nil
+  end
+
+  local wired, wireless = nil, nil
+  for _, side in ipairs(peripheral.getNames()) do
+    if peripheral.getType(side) == "modem" then
+      local m = peripheral.wrap(side)
+      if m.isWireless and m.isWireless() then
+        wireless = wireless or side
+      else
+        wired = wired or side
+      end
+    end
+  end
+  return wireless or wired
+end
+
+local function cmdServe(args)
+  if not (peripheral and rednet) then
+    print("Error: this computer doesn't support modems/rednet.")
+    return
+  end
+
+  local side = findModem(args[1])
+  if not side then
+    print("Error: no modem attached. Attach a wireless modem to this")
+    print("computer (a wired one also works on a local network), then")
+    print("run: satellites-admin serve [side]")
+    return
+  end
+
+  if not rednet.isOpen(side) then rednet.open(side) end
+  local m = peripheral.wrap(side)
+  local kind = (m.isWireless and m.isWireless()) and "wireless" or "wired"
+  local hostname = "satellites-admin-" .. tostring(os.getComputerID())
+  rednet.host(NET_PROTOCOL, hostname)
+
+  print("Serving the satellite catalog over the " .. kind .. " modem (" .. side .. ").")
+  print("Hostname: " .. hostname .. "  protocol: '" .. NET_PROTOCOL .. "'")
+  print("Any computer running `satellites` in range will pick this up")
+  print("automatically. Broadcasting a refresh every " .. BROADCAST_INTERVAL_SECONDS .. "s.")
+  print("Press q to stop serving.")
+  print("")
+
+  local running = true
+
+  -- Immediately push once so a viewer that's already open doesn't
+  -- have to wait for the first interval to elapse.
+  rednet.broadcast({ type = "catalog", data = loadData(), time = now() }, NET_PROTOCOL)
+
+  local function broadcaster()
+    while running do
+      sleep(BROADCAST_INTERVAL_SECONDS)
+      rednet.broadcast({ type = "catalog", data = loadData(), time = now() }, NET_PROTOCOL)
+      print("[" .. os.date("%H:%M:%S") .. "] broadcast sent")
+    end
+  end
+
+  -- Also answers on-demand requests, for anything more custom than
+  -- the viewer's simple "just listen for broadcasts" approach.
+  local function responder()
+    while running do
+      local senderId, msg = rednet.receive(NET_PROTOCOL, 2)
+      if senderId and type(msg) == "table" then
+        if msg.type == "list" then
+          rednet.send(senderId, { type = "catalog", data = loadData(), time = now() }, NET_PROTOCOL)
+          print("[" .. os.date("%H:%M:%S") .. "] sent full catalog to #" .. tostring(senderId))
+        elseif msg.type == "get" and msg.id then
+          rednet.send(senderId, { type = "satellite", id = msg.id, data = loadData()[msg.id], time = now() }, NET_PROTOCOL)
+          print("[" .. os.date("%H:%M:%S") .. "] sent '" .. tostring(msg.id) .. "' to #" .. tostring(senderId))
+        end
+      end
+    end
+  end
+
+  local function watchQuit()
+    while running do
+      local _, key = os.pullEvent("key")
+      if key == keys.q then
+        running = false
+      end
+    end
+  end
+
+  parallel.waitForAny(broadcaster, responder, watchQuit)
+
+  rednet.unhost(NET_PROTOCOL)
+  print("")
+  print("Stopped serving.")
+end
+
 local function cmdHelp()
   print("satellites-admin - manage satellites for the `satellites` viewer")
   print("")
@@ -306,6 +422,7 @@ local function cmdHelp()
   print("  satellites-admin list")
   print("  satellites-admin info <id>")
   print("  satellites-admin computer add|remove <id> <computerId> [computerName]")
+  print("  satellites-admin serve [side]  - broadcast the catalog over a modem")
   print("")
   print("Run with no arguments for an interactive menu.")
 end
@@ -357,7 +474,7 @@ local function interactiveMenu()
     end
 
     print("")
-    print("[a]dd  [e]dit  [r]emove  [i]nfo  [c]omputer link  [q]uit")
+    print("[a]dd  [e]dit  [r]emove  [i]nfo  [c]omputer link  [s]erve  [q]uit")
     write("> ")
     local choice = read()
 
@@ -378,6 +495,9 @@ local function interactiveMenu()
     elseif choice == "c" then
       write("add|remove id computerId [computerName]: ")
       cmdComputer(splitWords(read()))
+    elseif choice == "s" then
+      write("modem side (leave blank to auto-detect): ")
+      cmdServe(splitWords(read()))
     end
 
     print("")
@@ -407,6 +527,7 @@ local function main(...)
   elseif cmd == "list" then cmdList()
   elseif cmd == "info" then cmdInfo(args)
   elseif cmd == "computer" then cmdComputer(args)
+  elseif cmd == "serve" then cmdServe(args)
   elseif cmd == "help" then cmdHelp()
   else
     print("Unknown command: " .. tostring(cmd))

@@ -8,12 +8,20 @@
 --  orbit once per real-world minute (based on its configured
 --  orbital period), not once per animation frame - so it looks
 --  slow and deliberate, the way an actual satellite pass would.
+--  Each is drawn as a small solar-panel glyph oriented in its
+--  direction of travel, with a short fading trail behind it showing
+--  where it's been.
 --
 --  Click (mouse) or tap (monitor) a satellite marker to see its
 --  full info: name, description, signal strength, orbital
 --  parameters and every computer connected to it. Click/tap or
 --  press any key again to return to the orbit view. Press q to
 --  quit.
+--
+--  If a modem is attached, this also listens for satellite catalogs
+--  broadcast by `satellites-admin serve` on another computer, and
+--  merges them in live - handy for a remote tracking-station
+--  computer that doesn't have its own local satellites.json.
 --
 --  Repository: https://github.com/hez1ch/bad
 -- ============================================================
@@ -24,6 +32,8 @@ local ORBIT_TICK_SECONDS = 60 -- satellites advance once per real minute
 local MARKER_CLICK_TOLERANCE = 2 -- how many cells away a click/tap can
                                   -- land from a satellite marker and
                                   -- still count as hitting it
+local TRAIL_MAX_POINTS = 6    -- how many past positions to fade out behind a satellite
+local NET_PROTOCOL = "bad-satellites" -- must match satellites-admin's serve command
 
 local DATA_DIR  = "/.satellites"
 local DATA_FILE = DATA_DIR .. "/satellites.json"
@@ -44,6 +54,23 @@ end
 
 local monlib = loadLib({ "/lib/monitor.lua", "/.bad/lib/monitor.lua" })
 local threed = loadLib({ "/lib/threed.lua", "/.bad/lib/threed.lua" })
+
+-- Opens the first modem we can find (wireless or wired) for rednet,
+-- so we can passively listen for a `satellites-admin serve` catalog
+-- broadcast. Entirely optional - returns nil and we just skip the
+-- networking feature if there's no modem attached.
+local function openAnyModem()
+  if not (peripheral and rednet) then return nil end
+  local ok, names = pcall(peripheral.getNames)
+  if not ok then return nil end
+  for _, side in ipairs(names) do
+    if peripheral.getType(side) == "modem" then
+      if rednet.isOpen(side) then return side end
+      if pcall(rednet.open, side) then return side end
+    end
+  end
+  return nil
+end
 
 -- ---------------------------------------------------------------
 -- Storage
@@ -107,6 +134,35 @@ local function satellitePosition(sat)
   local rad = math.rad(sat.angle or 0)
   local local_ = { x = sat.orbitRadius * math.cos(rad), y = 0, z = sat.orbitRadius * math.sin(rad) }
   return threed.rotateX(local_, math.rad(sat.inclination or 0))
+end
+
+-- Screen position of a satellite, given the target's projection
+-- geometry. A pure function of the satellite's own fields, so it can
+-- also be evaluated for a slightly-advanced "ghost" angle to work out
+-- which way it's heading (see headingChar below).
+local function satScreenPos(sat, geom)
+  local worldPos = satellitePosition(sat)
+  local camPos = threed.rotateX(worldPos, CAM_TILT)
+  local dx, dy = threed.project(camPos, geom.scaleX, geom.scaleY)
+  local sx = geom.cx + math.floor(dx + 0.5)
+  local sy = geom.cy + math.floor(dy + 0.5)
+  return sx, sy
+end
+
+-- Picks a single character (>,<,^,v,/,\) that best matches the
+-- direction a satellite is currently moving on screen, so its glyph
+-- visibly points the way it's flying rather than sitting there as a
+-- plain, direction-less dot.
+local function headingChar(dx, dy)
+  if dx == 0 and dy == 0 then return "o" end
+  local h, v = math.abs(dx), math.abs(dy)
+  if h > v * 2 then
+    return dx > 0 and ">" or "<"
+  elseif v > h * 2 then
+    return dy > 0 and "v" or "^"
+  else
+    if (dx > 0) == (dy < 0) then return "/" else return "\\" end
+  end
 end
 
 local function clamp(v, lo, hi)
@@ -278,6 +334,59 @@ local function main()
     return changed
   end
 
+  -- Merges a catalog received over the network (from a
+  -- `satellites-admin serve` broadcast). Additive only - it never
+  -- removes a locally-known satellite just because a given broadcast
+  -- didn't happen to mention it, since the network is a supplemental
+  -- source, not necessarily the whole picture.
+  local function mergeFromNetwork(newData)
+    local changed = false
+    for id, incoming in pairs(newData) do
+      local cur = satData[id]
+      if not cur then
+        satData[id] = incoming
+        changed = true
+      else
+        for k, v in pairs(incoming) do
+          if k ~= "angle" and k ~= "lastTick" and cur[k] ~= v then
+            cur[k] = v
+            changed = true
+          end
+        end
+      end
+    end
+    return changed
+  end
+
+  local netSide = openAnyModem()
+
+  -- Short fading trail of each satellite's last few real positions,
+  -- per render target (a monitor and the terminal can have different
+  -- scales/projections). Recorded once per real orbit tick, not once
+  -- per animation frame, since that's the only point positions
+  -- actually change.
+  local trails = {} -- targetName -> id -> { {sx=,sy=}, ... }
+
+  local function recordTrails()
+    for targetName, geom in pairs(geomByTarget) do
+      local t = trails[targetName]
+      if not t then t = {}; trails[targetName] = t end
+      for id, sat in pairs(satData) do
+        local sx, sy = satScreenPos(sat, geom)
+        local list = t[id]
+        if not list then list = {}; t[id] = list end
+        local last = list[#list]
+        if not last or last.sx ~= sx or last.sy ~= sy then
+          list[#list + 1] = { sx = sx, sy = sy }
+          while #list > TRAIL_MAX_POINTS do table.remove(list, 1) end
+        end
+      end
+      for id in pairs(t) do
+        if not satData[id] then t[id] = nil end
+      end
+    end
+  end
+
   local function drawOrbit(w, h, targetName)
     local colorOk = term.isColor and term.isColor()
     local geom = geomByTarget[targetName]
@@ -317,18 +426,57 @@ local function main()
 
     -- satellites: each one's REAL orbital position (angle only moves
     -- once per real minute - see advanceOrbits), spinning around with
-    -- the same camera tilt as the Earth so they sit in the same scene
+    -- the same camera tilt as the Earth so they sit in the same scene.
+    -- Drawn as a small 3-cell glyph ("=" solar panels either side of a
+    -- direction arrow) so it reads as a spacecraft rather than a dot,
+    -- with a short fading trail behind it showing its recent track.
     local markers = {}
+    local targetTrails = trails[targetName]
     for id, sat in pairs(satData) do
-      local worldPos = satellitePosition(sat)
-      local camPos = threed.rotateX(worldPos, CAM_TILT)
-      local dx, dy = threed.project(camPos, geom.scaleX, geom.scaleY)
-      local sx = geom.cx + math.floor(dx + 0.5)
-      local sy = geom.cy + math.floor(dy + 0.5)
+      local sx, sy = satScreenPos(sat, geom)
       if sx >= 1 and sx <= w and sy >= 1 and sy <= h then
-        if colorOk then term.setTextColor(colors.orange) end
+        -- fading trail (older points first; the most recent one is
+        -- ~ the current position, so skip it - the glyph covers it)
+        local list = targetTrails and targetTrails[id]
+        if list then
+          for i = 1, #list - 1 do
+            local pt = list[i]
+            if pt.sx ~= sx or pt.sy ~= sy then
+              if colorOk then term.setTextColor(colors.gray) end
+              term.setCursorPos(pt.sx, pt.sy)
+              term.write(i >= #list - 2 and ":" or ".")
+            end
+          end
+        end
+
+        -- heading: sample the orbit slightly ahead to see which way
+        -- the satellite is actually flying right now
+        local aheadSx, aheadSy = satScreenPos(
+          { angle = ((sat.angle or 0) + 3) % 360, inclination = sat.inclination, orbitRadius = sat.orbitRadius },
+          geom
+        )
+        local dirCh = headingChar(aheadSx - sx, aheadSy - sy)
+
+        local bodyColor = colors.orange
+        if sat.signal then
+          if sat.signal >= 70 then bodyColor = colors.lime
+          elseif sat.signal < 30 then bodyColor = colors.red end
+        end
+
+        if sx - 1 >= 1 then
+          if colorOk then term.setTextColor(colors.yellow) end
+          term.setCursorPos(sx - 1, sy)
+          term.write("=")
+        end
+        if colorOk then term.setTextColor(bodyColor) end
         term.setCursorPos(sx, sy)
-        term.write("o")
+        term.write(dirCh)
+        if sx + 1 <= w then
+          if colorOk then term.setTextColor(colors.yellow) end
+          term.setCursorPos(sx + 1, sy)
+          term.write("=")
+        end
+
         markers[#markers + 1] = { id = id, sx = sx, sy = sy }
       end
     end
@@ -338,7 +486,8 @@ local function main()
     term.setCursorPos(1, h)
     local count = 0
     for _ in pairs(satData) do count = count + 1 end
-    term.write("satellites (" .. count .. ") - click one for info, q to quit")
+    local netTag = netSide and (" | net:" .. netSide) or ""
+    term.write("satellites (" .. count .. ")" .. netTag .. " - click one for info, q to quit")
   end
 
   local function drawDetail(w, h)
@@ -437,11 +586,13 @@ local function main()
 
   -- Advances satellite orbital positions once per real minute.
   local function orbitUpdater()
+    recordTrails() -- capture the starting position so the trail has something to fade from
     while running do
       sleep(ORBIT_TICK_SECONDS)
       if advanceOrbits(satData) then
         saveData(satData)
       end
+      recordTrails()
     end
   end
 
@@ -453,6 +604,26 @@ local function main()
       sleep(RELOAD_TICK_SECONDS)
       if reloadFromDisk() then
         renderFrame()
+      end
+    end
+  end
+
+  -- Passively listens for satellite catalogs broadcast by
+  -- `satellites-admin serve` on another computer over rednet, and
+  -- merges anything new/changed in live. A no-op loop (never
+  -- returning, so it doesn't disturb parallel.waitForAny) if there's
+  -- no modem attached.
+  local function networkListener()
+    while running do
+      if netSide then
+        local _, msg = rednet.receive(NET_PROTOCOL, 5)
+        if type(msg) == "table" and msg.type == "catalog" and type(msg.data) == "table" then
+          if mergeFromNetwork(msg.data) then
+            renderFrame()
+          end
+        end
+      else
+        sleep(5)
       end
     end
   end
@@ -508,7 +679,7 @@ local function main()
     end
   end
 
-  parallel.waitForAny(animate, orbitUpdater, dataRefresher, watchInput)
+  parallel.waitForAny(animate, orbitUpdater, dataRefresher, networkListener, watchInput)
 
   term.setBackgroundColor(colors and colors.black or nil)
   term.clear()
