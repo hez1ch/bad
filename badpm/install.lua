@@ -11,6 +11,7 @@
 
 local BAD_URL = "https://raw.githubusercontent.com/hez1ch/bad/main/badpm/bad.lua"
 local MONLIB_URL = "https://raw.githubusercontent.com/hez1ch/bad/main/lib/monitor.lua"
+local THREED_URL = "https://raw.githubusercontent.com/hez1ch/bad/main/lib/threed.lua"
 local PATH_LINE = 'shell.setPath(shell.path() .. ":/bin")'
 
 print("Installing BAD...")
@@ -39,19 +40,34 @@ local h = fs.open("/bin/bad", "w")
 h.write(body)
 h.close()
 
--- Best-effort: grab the shared monitor library too, so `bad gui` and
--- the bundled apps can mirror to any attached monitors right away.
+-- Best-effort: grab the shared monitor + 3D math libraries too, so
+-- `bad gui`, moonsat, satellites, and the bundled apps can mirror to
+-- attached monitors / render their 3D scenes right away.
+if not fs.exists("/lib") then fs.makeDir("/lib") end
+
 local monResp = http.get(MONLIB_URL)
 if monResp then
   local monBody = monResp.readAll()
   monResp.close()
-  if not fs.exists("/lib") then fs.makeDir("/lib") end
   local mh = fs.open("/lib/monitor.lua", "w")
   mh.write(monBody)
   mh.close()
   print("Installed shared monitor library (/lib/monitor.lua).")
 else
   print("Note: could not fetch /lib/monitor.lua (monitor mirroring")
+  print("will be unavailable until it's installed).")
+end
+
+local threedResp = http.get(THREED_URL)
+if threedResp then
+  local threedBody = threedResp.readAll()
+  threedResp.close()
+  local th = fs.open("/lib/threed.lua", "w")
+  th.write(threedBody)
+  th.close()
+  print("Installed shared 3D math library (/lib/threed.lua).")
+else
+  print("Note: could not fetch /lib/threed.lua (moonsat/satellites")
   print("will be unavailable until it's installed).")
 end
 

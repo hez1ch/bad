@@ -12,11 +12,35 @@
         }
       ]
     },
-    "minegram": {
+    "monlib": {
       "version": "1.0.0",
-      "description": "Minegram client - Telegram-like chat for CC:Tweaked players",
+      "description": "Shared library: mirrors any program's display onto attached monitor peripherals and normalizes mouse/monitor-touch input",
       "author": "hez1ch",
       "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/lib/monitor.lua",
+          "path": "/lib/monitor.lua"
+        }
+      ]
+    },
+    "threed": {
+      "version": "1.0.0",
+      "description": "Shared library: real 3D math (vectors, rotation matrices, sphere sampling, projection, Lambert shading) for terminal/monitor renders",
+      "author": "hez1ch",
+      "depends": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/lib/threed.lua",
+          "path": "/lib/threed.lua"
+        }
+      ]
+    },
+    "minegram": {
+      "version": "1.1.0",
+      "description": "Minegram client - Telegram-like chat for CC:Tweaked players",
+      "author": "hez1ch",
+      "depends": ["monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/minegram/minegram.lua",
@@ -25,10 +49,10 @@
       ]
     },
     "minegram-server": {
-      "version": "1.0.0",
-      "description": "Minegram server - hosts chats/groups/channels for Minegram clients",
+      "version": "1.1.0",
+      "description": "Minegram server - hosts chats/groups/channels for Minegram clients, with a live monitor dashboard",
       "author": "hez1ch",
-      "depends": [],
+      "depends": ["monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/minegram/minegram-server.lua",
@@ -37,10 +61,10 @@
       ]
     },
     "lastfm": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Pretty now-playing viewer powered by the Last.fm API",
       "author": "hez1ch",
-      "depends": [],
+      "depends": ["monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/lastfm/lastfm.lua",
@@ -49,10 +73,10 @@
       ]
     },
     "krnl-upd": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Pick which OS build (3ggrnel / SmallVanya / Hezion) fastfetch reports",
       "author": "hez1ch",
-      "depends": [],
+      "depends": ["monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/fastfetch/krnl-upd.lua",
@@ -61,10 +85,10 @@
       ]
     },
     "fastfetch": {
-      "version": "1.0.1",
+      "version": "1.1.0",
       "description": "neofetch-style system info screen (OS, package manager, uptime, disk)",
       "author": "hez1ch",
-      "depends": ["krnl-upd"],
+      "depends": ["krnl-upd", "monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/fastfetch/fastfetch.lua",
@@ -73,14 +97,38 @@
       ]
     },
     "moonsat": {
-      "version": "1.0.0",
-      "description": "ASCII screensaver: a spinning moon orbited by a radio satellite",
+      "version": "2.0.0",
+      "description": "Screensaver: a REAL 3D spinning moon (rotation matrices + Lambert lighting) orbited by a radio satellite",
       "author": "hez1ch",
-      "depends": [],
+      "depends": ["threed", "monlib"],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/moonsat/moonsat.lua",
           "path": "/bin/moonsat"
+        }
+      ]
+    },
+    "satellites": {
+      "version": "1.0.0",
+      "description": "A REAL 3D spinning Earth with tracked satellites in real-time orbit (moves once per real minute); click/tap a satellite for full info",
+      "author": "hez1ch",
+      "depends": ["threed", "monlib"],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/satellites/satellites.lua",
+          "path": "/bin/satellites"
+        }
+      ]
+    },
+    "satellites-admin": {
+      "version": "1.0.0",
+      "description": "Add/edit/remove the satellites shown by the `satellites` viewer, and manage which computers are linked to each one",
+      "author": "hez1ch",
+      "depends": ["monlib"],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/hez1ch/bad/main/apps/satellites/satellites-admin.lua",
+          "path": "/bin/satellites-admin"
         }
       ]
     }
